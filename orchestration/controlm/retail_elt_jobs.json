@@ -1,0 +1,56 @@
+{
+  "Defaults": {
+    "Application": "RetailAnalytics",
+    "SubApplication": "DailyELT",
+    "RunAs": "etl_svc",
+    "Host": "etl-agent-01"
+  },
+  "RETAIL_ELT_DAILY": {
+    "Type": "Folder",
+    "Description": "Control-M equivalent of the Airflow DAG retail_elt_daily (jobs-as-code)",
+    "When": { "FromTime": "0600", "WeekDays": ["ALL"] },
+
+    "EXTRACT_LAND_LOAD": {
+      "Type": "Job:Command",
+      "Description": "Extract, validate, land to S3, COPY INTO RAW, CALL ODS.SP_LOAD_ODS",
+      "Command": "cd /opt/retail-elt && python -m ingestion.extract_load --batch-date %%$ODATE",
+      "RerunLimit": { "Times": "2" },
+      "IfContractViolation": {
+        "Type": "If",
+        "CompletionStatus": "2",
+        "Mail": {
+          "Type": "Action:Mail",
+          "To": "data-eng-oncall@example.com",
+          "Subject": "RETAIL ELT %%$ODATE: source file failed contract validation",
+          "Message": "Landing file rejected before reaching Snowflake. See job output."
+        }
+      }
+    },
+
+    "DBT_SNAPSHOT": {
+      "Type": "Job:Command",
+      "Command": "cd /opt/retail-elt/dbt && dbt snapshot --target prod"
+    },
+
+    "DBT_BUILD": {
+      "Type": "Job:Command",
+      "Description": "Build models and run tests in dependency order",
+      "Command": "cd /opt/retail-elt/dbt && dbt build --exclude resource_type:snapshot --target prod",
+      "IfFailed": {
+        "Type": "If",
+        "CompletionStatus": "NOTOK",
+        "Mail": {
+          "Type": "Action:Mail",
+          "To": "data-eng-oncall@example.com",
+          "Subject": "RETAIL ELT %%$ODATE: dbt build failed",
+          "Message": "Model or data test failure. Marts were not refreshed past the failing node."
+        }
+      }
+    },
+
+    "Flow": {
+      "Type": "Flow",
+      "Sequence": ["EXTRACT_LAND_LOAD", "DBT_SNAPSHOT", "DBT_BUILD"]
+    }
+  }
+}

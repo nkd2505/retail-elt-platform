@@ -1,0 +1,37 @@
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  python:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - run: pip install -r requirements-dev.txt
+      - run: ruff check .
+      - run: pytest -q
+      - name: End-to-end dry run
+        run: python -m ingestion.extract_load --batch-date 2026-10-28 --dry-run
+
+  dbt:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - run: pip install "dbt-snowflake>=1.8,<2.0"
+      - name: dbt deps + parse (validates refs, Jinja, YAML without a warehouse)
+        working-directory: dbt
+        run: dbt deps && dbt parse --profiles-dir ../ci
+
+  aws:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: pip install cfn-lint
+      - run: cfn-lint aws/template.yaml

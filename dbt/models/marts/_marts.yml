@@ -1,0 +1,46 @@
+version: 2
+
+models:
+  - name: dim_customers
+    description: SCD Type 2 customer dimension (one row per customer version).
+    columns:
+      - name: customer_sk
+        tests: [unique, not_null]
+      - name: customer_id
+        tests: [not_null]
+
+  - name: dim_products
+    columns:
+      - name: product_sk
+        tests: [unique, not_null]
+
+  - name: dim_date
+    columns:
+      - name: date_key
+        tests: [unique, not_null]
+
+  - name: fct_order_lines
+    description: Order-line grain fact table, incrementally merged, clustered by order_date.
+    columns:
+      - name: order_item_id
+        tests: [unique, not_null]
+      - name: customer_sk
+        description: Point-in-time join to the customer version valid on order_date.
+        tests:
+          - not_null
+          - relationships:
+              to: ref('dim_customers')
+              field: customer_sk
+      - name: product_sk
+        tests:
+          - not_null
+          - relationships:
+              to: ref('dim_products')
+              field: product_sk
+      - name: net_amount
+        tests:
+          - dbt_utils.expression_is_true:
+              expression: ">= 0"
+
+  - name: fct_daily_sales
+    description: Daily KPI aggregate by category and state, consumed by Tableau / Power BI.

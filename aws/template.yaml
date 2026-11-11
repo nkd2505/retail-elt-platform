@@ -1,0 +1,131 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Transform: AWS::Serverless-2016-10-31
+Description: Retail ELT - S3 landing zone, validation Lambda, alerting, and Snowflake access role.
+
+Parameters:
+  ProjectName:
+    Type: String
+    Default: retail-elt
+  AlertEmail:
+    Type: String
+    Description: Email that receives quarantine alerts
+  SnowflakeIamUserArn:
+    Type: String
+    Description: STORAGE_AWS_IAM_USER_ARN from DESC INTEGRATION S3_RETAIL_INT
+    Default: arn:aws:iam::000000000000:user/placeholder
+  SnowflakeExternalId:
+    Type: String
+    Description: STORAGE_AWS_EXTERNAL_ID from DESC INTEGRATION S3_RETAIL_INT
+    Default: placeholder
+
+Globals:
+  Function:
+    Runtime: python3.12
+    Timeout: 30
+    MemorySize: 256
+
+Resources:
+  RawBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      # Explicit name avoids the classic bucket <-> Lambda permission circular dependency
+      BucketName: !Sub "${ProjectName}-raw-${AWS::AccountId}"
+      VersioningConfiguration: { Status: Enabled }
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault: { SSEAlgorithm: AES256 }
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      LifecycleConfiguration:
+        Rules:
+          - Id: ArchiveRawAfter90Days
+            Status: Enabled
+            Prefix: raw/
+            Transitions: [{ StorageClass: GLACIER, TransitionInDays: 90 }]
+          - Id: ExpireQuarantineAfter30Days
+            Status: Enabled
+            Prefix: quarantine/
+            ExpirationInDays: 30
+
+  AlertTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: !Sub "${ProjectName}-alerts"
+      Subscription: [{ Protocol: email, Endpoint: !Ref AlertEmail }]
+
+  LandingValidatorFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub "${ProjectName}-landing-validator"
+      CodeUri: lambda/
+      Handler: handler.lambda_handler
+      Environment:
+        Variables:
+          ALERT_TOPIC_ARN: !Ref AlertTopic
+      Policies:
+        - S3CrudPolicy:
+            BucketName: !Sub "${ProjectName}-raw-${AWS::AccountId}"
+        - SNSPublishMessagePolicy:
+            TopicName: !GetAtt AlertTopic.TopicName
+      Events:
+        CsvLanded:
+          Type: S3
+          Properties:
+            Bucket: !Ref RawBucket
+            Events: s3:ObjectCreated:*
+            Filter:
+              S3Key:
+                Rules:
+                  - { Name: prefix, Value: raw/ }
+                  - { Name: suffix, Value: .csv }
+
+  LandingValidatorErrorsAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmDescription: Landing validator Lambda is erroring
+      Namespace: AWS/Lambda
+      MetricName: Errors
+      Dimensions: [{ Name: FunctionName, Value: !Ref LandingValidatorFunction }]
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 1
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      AlarmActions: [!Ref AlertTopic]
+
+  # Least-privilege role that Snowflake's storage integration assumes (read-only on raw/)
+  SnowflakeAccessRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "${ProjectName}-snowflake-s3-reader"
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal: { AWS: !Ref SnowflakeIamUserArn }
+            Action: sts:AssumeRole
+            Condition:
+              StringEquals: { "sts:ExternalId": !Ref SnowflakeExternalId }
+      Policies:
+        - PolicyName: read-raw-prefix
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: [s3:GetObject, s3:GetObjectVersion]
+                Resource: !Sub "arn:aws:s3:::${ProjectName}-raw-${AWS::AccountId}/raw/*"
+              - Effect: Allow
+                Action: s3:ListBucket
+                Resource: !Sub "arn:aws:s3:::${ProjectName}-raw-${AWS::AccountId}"
+                Condition:
+                  StringLike: { "s3:prefix": ["raw/*"] }
+
+Outputs:
+  RawBucketName:
+    Value: !Ref RawBucket
+  SnowflakeRoleArn:
+    Description: Paste into STORAGE_AWS_ROLE_ARN in snowflake/01_setup.sql
+    Value: !GetAtt SnowflakeAccessRole.Arn

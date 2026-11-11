@@ -1,0 +1,28 @@
+version: 2
+
+sources:
+  - name: ods
+    database: RETAIL_DB
+    schema: ODS
+    description: Operational data store - deduplicated current state, loaded by ODS.SP_LOAD_ODS
+    loaded_at_field: _ods_updated_at
+    freshness:
+      warn_after: { count: 26, period: hour }
+      error_after: { count: 50, period: hour }
+    tables:
+      - name: customers
+        columns:
+          - name: customer_id
+            tests: [unique, not_null]
+      - name: products
+        columns:
+          - name: product_id
+            tests: [unique, not_null]
+      - name: orders
+        columns:
+          - name: order_id
+            tests: [unique, not_null]
+      - name: order_items
+        columns:
+          - name: order_item_id
+            tests: [unique, not_null]

@@ -1,0 +1,14 @@
+# Copy to ~/.dbt/profiles.yml (never commit real credentials)
+retail_analytics:
+  target: dev
+  outputs:
+    dev:
+      type: snowflake
+      account: "{{ env_var('SNOWFLAKE_ACCOUNT') }}"
+      user: "{{ env_var('SNOWFLAKE_USER') }}"
+      password: "{{ env_var('SNOWFLAKE_PASSWORD') }}"
+      role: TRANSFORMER
+      warehouse: RETAIL_WH
+      database: RETAIL_DB
+      schema: DEV_{{ env_var('USER', 'me') | upper }}
+      threads: 4

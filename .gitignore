@@ -1,0 +1,10 @@
+__pycache__/
+*.pyc
+.venv/
+data/
+dbt/target/
+dbt/dbt_packages/
+dbt/logs/
+profiles.yml
+.env
+.aws-sam/

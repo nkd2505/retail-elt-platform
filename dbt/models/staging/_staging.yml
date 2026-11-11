@@ -1,0 +1,24 @@
+version: 2
+
+models:
+  - name: stg_orders
+    columns:
+      - name: order_id
+        tests: [unique, not_null]
+      - name: order_status
+        tests:
+          - accepted_values:
+              values: ["placed", "shipped", "delivered", "cancelled", "returned"]
+  - name: stg_order_items
+    columns:
+      - name: order_item_id
+        tests: [unique, not_null]
+      - name: quantity
+        tests:
+          - dbt_utils.accepted_range:
+              min_value: 1
+      - name: discount_pct
+        tests:
+          - dbt_utils.accepted_range:
+              min_value: 0
+              max_value: 100
